@@ -17,6 +17,8 @@ import (
 
 const baseURL = "https://api.waterdata.usgs.gov/ogcapi/v0/collections/latest-continuous/items"
 
+const summerFullPool = 2893.00
+
 // ---- USGS API types --------------------------------------------------------
 
 type Float64Value float64
@@ -391,6 +393,15 @@ const indexHTML = `<!DOCTYPE html>
     .meta .label { color: #4a8aaa; }
     .meta .value { color: #c8e8f5; font-weight: 600; }
 
+    .diff-line {
+      margin-top: 0.6rem;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    .diff-above { color: #4ecb8d; }
+    .diff-below { color: #f4a44a; }
+
     .loading {
       font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
       font-size: 0.9rem;
@@ -434,6 +445,7 @@ const indexHTML = `<!DOCTYPE html>
     <div class="headline">
       <h1>Flathead Lake</h1>
       <div class="tagline">Pool Level · USGS Station 12371550 · Refreshes every 60 s</div>
+      <div class="tagline">Summer Full Pool: 2,893.00 ft</div>
     </div>
 
     <div class="card" id="card">
@@ -446,6 +458,7 @@ const indexHTML = `<!DOCTYPE html>
   <script>
     // Flathead Lake elevation range (ft above sea level) for the progress bar
     const LOW = 2877, HIGH = 2893;
+    const SUMMER_FULL_POOL = 2893.00;
 
     function load() {
       fetch('/data')
@@ -457,11 +470,17 @@ const indexHTML = `<!DOCTYPE html>
             return;
           }
           const pct = Math.min(100, Math.max(0, ((d.value - LOW) / (HIGH - LOW)) * 100));
+          const diff = d.value - SUMMER_FULL_POOL;
+          const diffAbs = Math.abs(diff).toFixed(2);
+          const diffLabel = diff >= 0
+            ? '<span class="diff-above">▲ ' + diffAbs + ' ft above full pool</span>'
+            : '<span class="diff-below">▼ ' + diffAbs + ' ft below full pool</span>';
           const measured = new Date(d.measured_at).toLocaleString('en-US', {month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'});
           const fetched  = new Date(d.fetched_at).toLocaleString('en-US', {hour:'numeric',minute:'2-digit',second:'2-digit',timeZoneName:'short'});
           card.innerHTML =
             '<div class="gauge-label">Current Pool Elevation</div>' +
             '<div class="level-value">' + d.value.toFixed(2) + '<span class="level-unit">' + d.unit + '</span></div>' +
+            '<div class="diff-line">' + diffLabel + '</div>' +
             '<div class="bar-wrap"><div class="bar-fill" style="width:' + pct.toFixed(1) + '%"></div></div>' +
             '<hr class="divider">' +
             '<div class="meta">' +
