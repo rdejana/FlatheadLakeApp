@@ -149,6 +149,8 @@ type Reading struct {
 	Station    string    `json:"station"`
 	Value      float64   `json:"value"`
 	Unit       string    `json:"unit"`
+	FullPool   float64   `json:"full_pool"`
+	Delta      float64   `json:"delta"`
 	MeasuredAt time.Time `json:"measured_at"`
 	FetchedAt  time.Time `json:"fetched_at"`
 }
@@ -190,10 +192,13 @@ func fetchLoop(client *Client, updates chan<- Reading, done <-chan struct{}) {
 			return
 		}
 		p := fc.Features[0].Properties
+		value := float64(p.Value)
 		updates <- Reading{
 			Station:    p.MonitoringLocationID,
-			Value:      float64(p.Value),
+			Value:      value,
 			Unit:       p.UnitOfMeasure,
+			FullPool:   summerFullPool,
+			Delta:      value - summerFullPool,
 			MeasuredAt: p.Time,
 			FetchedAt:  time.Now(),
 		}
@@ -445,7 +450,7 @@ const indexHTML = `<!DOCTYPE html>
     <div class="headline">
       <h1>Flathead Lake</h1>
       <div class="tagline">Pool Level · USGS Station 12371550 · Refreshes every 60 s</div>
-      <div class="tagline">Summer Full Pool: 2,893.00 ft</div>
+      <div class="tagline" id="full-pool-line">Summer Full Pool: — ft</div>
     </div>
 
     <div class="card" id="card">
@@ -458,7 +463,6 @@ const indexHTML = `<!DOCTYPE html>
   <script>
     // Flathead Lake elevation range (ft above sea level) for the progress bar
     const LOW = 2877, HIGH = 2893;
-    const SUMMER_FULL_POOL = 2893.00;
 
     function load() {
       fetch('/data')
@@ -469,10 +473,11 @@ const indexHTML = `<!DOCTYPE html>
             card.innerHTML = '<div class="loading">Waiting for first reading…</div>';
             return;
           }
+          document.getElementById('full-pool-line').textContent =
+            'Summer Full Pool: ' + d.full_pool.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' ft';
           const pct = Math.min(100, Math.max(0, ((d.value - LOW) / (HIGH - LOW)) * 100));
-          const diff = d.value - SUMMER_FULL_POOL;
-          const diffAbs = Math.abs(diff).toFixed(2);
-          const diffLabel = diff >= 0
+          const diffAbs = Math.abs(d.delta).toFixed(2);
+          const diffLabel = d.delta >= 0
             ? '<span class="diff-above">▲ ' + diffAbs + ' ft above full pool</span>'
             : '<span class="diff-below">▼ ' + diffAbs + ' ft below full pool</span>';
           const measured = new Date(d.measured_at).toLocaleString('en-US', {month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'});
