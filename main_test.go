@@ -184,16 +184,5 @@ in,red,2024-05-15T12:00:00Z,Scraped bunks`
 	}
 	resp.Body.Close()
 
-	// Test /api/boat-logs DELETE
-	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/boat-logs?id="+created.ID, nil)
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("Failed to DELETE /api/boat-logs: %v", err)
-	}
-	if resp.StatusCode != http.StatusNoContent {
-		t.Errorf("Expected 204 for DELETE /api/boat-logs, got %d", resp.StatusCode)
-	}
-	resp.Body.Close()
-
 	_ = updates
 }

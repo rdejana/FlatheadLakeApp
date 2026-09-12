@@ -29,7 +29,6 @@ type BoatLog struct {
 type BoatStore interface {
 	GetAll() []BoatLog
 	Add(log BoatLog) BoatLog
-	Delete(id string) bool
 }
 
 // SQLiteBoatStore is the SQLite implementation of BoatStore.
@@ -139,16 +138,6 @@ func (s *SQLiteBoatStore) Add(l BoatLog) BoatLog {
 	return l
 }
 
-func (s *SQLiteBoatStore) Delete(id string) bool {
-	res, err := s.db.Exec("DELETE FROM boat_logs WHERE id = ?", id)
-	if err != nil {
-		log.Printf("[sqlite] delete error: %v", err)
-		return false
-	}
-	n, err := res.RowsAffected()
-	return err == nil && n > 0
-}
-
 // MemoryBoatStore is the in-memory implementation of BoatStore.
 type MemoryBoatStore struct {
 	mu   sync.RWMutex
@@ -188,15 +177,4 @@ func (s *MemoryBoatStore) Add(l BoatLog) BoatLog {
 	}
 	s.logs[l.ID] = l
 	return l
-}
-
-func (s *MemoryBoatStore) Delete(id string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, exists := s.logs[id]; exists {
-		delete(s.logs, id)
-		return true
-	}
-	return false
 }
