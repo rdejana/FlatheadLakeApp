@@ -29,7 +29,12 @@ func TestEndpoints(t *testing.T) {
 		}
 	}()
 
-	boatStore := NewMemoryBoatStore()
+	boatStore, err := NewSQLiteBoatStore(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create in-memory SQLite store: %v", err)
+	}
+	defer boatStore.Close()
+
 	mux := newMux(client, queries, boatStore)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()

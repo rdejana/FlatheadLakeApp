@@ -7,6 +7,7 @@ COPY go.mod .
 RUN go mod download
 
 COPY . .
+RUN rm -f boat_tracker.db boat_tracker.db*
 
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o pool .
 
