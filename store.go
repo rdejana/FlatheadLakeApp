@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 // BoatLog represents a record of launching or retrieving a boat on the lift.
@@ -29,6 +29,7 @@ type BoatLog struct {
 type BoatStore interface {
 	GetAll() []BoatLog
 	Add(log BoatLog) BoatLog
+	Delete(id string) bool
 }
 
 // SQLiteBoatStore is the SQLite implementation of BoatStore.
@@ -37,7 +38,7 @@ type SQLiteBoatStore struct {
 }
 
 func NewSQLiteBoatStore(dbPath string) (*SQLiteBoatStore, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite db: %w", err)
 	}
@@ -138,6 +139,16 @@ func (s *SQLiteBoatStore) Add(l BoatLog) BoatLog {
 	return l
 }
 
+func (s *SQLiteBoatStore) Delete(id string) bool {
+	res, err := s.db.Exec("DELETE FROM boat_logs WHERE id = ?", id)
+	if err != nil {
+		log.Printf("[sqlite] delete error: %v", err)
+		return false
+	}
+	n, err := res.RowsAffected()
+	return err == nil && n > 0
+}
+
 // MemoryBoatStore is the in-memory implementation of BoatStore.
 type MemoryBoatStore struct {
 	mu   sync.RWMutex
@@ -177,4 +188,15 @@ func (s *MemoryBoatStore) Add(l BoatLog) BoatLog {
 	}
 	s.logs[l.ID] = l
 	return l
+}
+
+func (s *MemoryBoatStore) Delete(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.logs[id]; exists {
+		delete(s.logs, id)
+		return true
+	}
+	return false
 }

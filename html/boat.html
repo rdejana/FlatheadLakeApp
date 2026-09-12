@@ -590,6 +590,108 @@
       color: #7aaccc;
     }
 
+    .btn-delete {
+      background: none;
+      border: 1px solid rgba(242, 95, 92, 0.25);
+      color: #f25f5c;
+      cursor: pointer;
+      font-size: 1.1rem;
+      line-height: 1;
+      width: 2rem;
+      height: 2rem;
+      border-radius: 6px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+    }
+    .btn-delete:hover {
+      background: rgba(242, 95, 92, 0.2);
+      border-color: #f25f5c;
+      color: #ffffff;
+      transform: scale(1.05);
+    }
+
+    /* ---------- modal confirmation dialog ---------- */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(5, 15, 26, 0.75);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+    .modal-overlay.open {
+      display: flex;
+    }
+    .modal-box {
+      background: #0d2840;
+      border: 1px solid rgba(125, 212, 248, 0.25);
+      border-radius: 12px;
+      padding: 1.75rem;
+      max-width: 420px;
+      width: 100%;
+      box-shadow: 0 16px 36px rgba(0,0,0,0.5);
+      animation: modalFadeIn 0.2s ease-out;
+    }
+    @keyframes modalFadeIn {
+      from { opacity: 0; transform: scale(0.95); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .modal-title {
+      font-family: 'Cinzel', Georgia, serif;
+      color: #f25f5c;
+      font-size: 1.2rem;
+      margin: 0 0 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .modal-body {
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      color: #b0d4ec;
+      font-size: 0.92rem;
+      line-height: 1.5;
+      margin-bottom: 1.5rem;
+    }
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.75rem;
+    }
+    .btn-cancel {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #b0d4ec;
+      padding: 0.55rem 1.1rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 500;
+      font-size: 0.88rem;
+      transition: background 0.15s;
+    }
+    .btn-cancel:hover {
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+    }
+    .btn-confirm-delete {
+      background: #e63946;
+      border: 1px solid #ff4d5a;
+      color: #fff;
+      padding: 0.55rem 1.1rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.88rem;
+      transition: background 0.15s;
+    }
+    .btn-confirm-delete:hover {
+      background: #c52838;
+    }
 
     .empty-state {
       text-align: center;
@@ -613,6 +715,18 @@
   </style>
 </head>
 <body>
+
+  <!-- Delete Confirmation Modal -->
+  <div class="modal-overlay" id="deleteModal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-box">
+      <h3 class="modal-title" id="modalTitle">⚠️ Confirm Deletion</h3>
+      <p class="modal-body" id="deleteModalText">Are you sure you want to delete this boat log entry? This action cannot be undone.</p>
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" onclick="closeDeleteModal()">Cancel</button>
+        <button type="button" class="btn-confirm-delete" id="btnConfirmDelete" onclick="confirmDeleteLog()">Delete Entry</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Drawer overlay & navigation -->
   <div class="drawer-overlay" id="drawerOverlay" onclick="toggleMenu(false)"></div>
@@ -950,6 +1064,7 @@
                     <div class="log-level-val">${l.lake_level.toFixed(2)} <span style="font-size:0.8rem; font-weight:normal; color:#7aaccc;">${l.unit || 'ft'}</span></div>
                     <div class="log-level-delta">${deltaText}</div>
                   </div>
+                  <button class="btn-delete" onclick="openDeleteModal('${l.id}')" title="Delete log entry" aria-label="Delete entry">&times;</button>
                 </div>
               </div>
             `;
@@ -959,6 +1074,54 @@
           document.getElementById('logsContainer').innerHTML = '<div class="empty-state">Failed to load boat logs.</div>';
         });
     }
+
+    let pendingDeleteId = null;
+
+    function openDeleteModal(id) {
+      pendingDeleteId = id;
+      const modal = document.getElementById('deleteModal');
+      modal.classList.add('open');
+    }
+
+    function closeDeleteModal() {
+      pendingDeleteId = null;
+      const modal = document.getElementById('deleteModal');
+      modal.classList.remove('open');
+    }
+
+    function confirmDeleteLog() {
+      if (!pendingDeleteId) return;
+      const id = pendingDeleteId;
+      const deleteBtn = document.getElementById('btnConfirmDelete');
+      deleteBtn.disabled = true;
+      deleteBtn.textContent = 'Deleting...';
+
+      fetch('/api/boat-logs?id=' + encodeURIComponent(id), { method: 'DELETE' })
+        .then(r => {
+          if (!r.ok) throw new Error("Failed to delete log");
+          closeDeleteModal();
+          loadLogs();
+        })
+        .catch(err => {
+          alert("Error deleting log: " + err.message);
+        })
+        .finally(() => {
+          deleteBtn.disabled = false;
+          deleteBtn.textContent = 'Delete Entry';
+        });
+    }
+
+    // Close modal on Escape key or clicking outside the dialog box
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && document.getElementById('deleteModal').classList.contains('open')) {
+        closeDeleteModal();
+      }
+    });
+    document.getElementById('deleteModal').addEventListener('click', e => {
+      if (e.target === document.getElementById('deleteModal')) {
+        closeDeleteModal();
+      }
+    });
 
     function escapeHtml(text) {
       const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };

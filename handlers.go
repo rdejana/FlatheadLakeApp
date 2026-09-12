@@ -219,6 +219,18 @@ func newMux(client *Client, queries chan<- chan<- Reading, boatStore BoatStore) 
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(created)
 
+		case http.MethodDelete:
+			id := r.URL.Query().Get("id")
+			if id == "" {
+				http.Error(w, "id parameter is required", http.StatusBadRequest)
+				return
+			}
+			if !boatStore.Delete(id) {
+				http.Error(w, "log not found", http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
