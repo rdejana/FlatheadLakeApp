@@ -1012,12 +1012,16 @@
 
     function loadLogs() {
       fetch('/api/boat-logs')
-        .then(r => r.json())
+        .then(r => {
+          if (!r.ok) throw new Error('HTTP error ' + r.status);
+          return r.json();
+        })
         .then(logs => {
           const container = document.getElementById('logsContainer');
-          document.getElementById('logCount').textContent = logs.length + (logs.length === 1 ? ' entry' : ' entries');
+          const logsList = Array.isArray(logs) ? logs : [];
+          document.getElementById('logCount').textContent = logsList.length + (logsList.length === 1 ? ' entry' : ' entries');
 
-          if (!logs || logs.length === 0) {
+          if (logsList.length === 0) {
             container.innerHTML = '<div class="empty-state">No boat logs recorded yet. Use the form above to add your first launch or haul-out.</div>';
             return;
           }
