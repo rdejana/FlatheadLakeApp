@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,9 +16,16 @@ import (
 	"time"
 )
 
-const baseURL = "https://api.waterdata.usgs.gov/ogcapi/v0/collections/latest-continuous/items"
+//go:embed html/*.html
+var htmlFS embed.FS
 
-const summerFullPool = 2893.00
+const (
+	latestContinuousURL = "https://api.waterdata.usgs.gov/ogcapi/v0/collections/latest-continuous/items"
+	continuousURL       = "https://api.waterdata.usgs.gov/ogcapi/v0/collections/continuous/items"
+	defaultStationID    = "USGS-12371550"
+	defaultParameter    = "00062"
+	summerFullPool      = 2893.00
+)
 
 // ---- USGS API types --------------------------------------------------------
 
@@ -99,7 +107,7 @@ func NewClient(apiKey string) *Client {
 }
 
 func (c *Client) GetLatestContinuous(ctx context.Context, locationID, parameterCode string) (*FeatureCollection, error) {
-	u, err := url.Parse(baseURL)
+	u, err := url.Parse(latestContinuousURL)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +117,27 @@ func (c *Client) GetLatestContinuous(ctx context.Context, locationID, parameterC
 	q.Set("parameter_code", parameterCode)
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	return c.fetchFeatureCollection(ctx, u.String())
+}
+
+func (c *Client) GetContinuousHistory(ctx context.Context, locationID, parameterCode, start, end string) (*FeatureCollection, error) {
+	u, err := url.Parse(continuousURL)
+	if err != nil {
+		return nil, err
+	}
+
+	q := u.Query()
+	q.Set("monitoring_location_id", locationID)
+	q.Set("parameter_code", parameterCode)
+	q.Set("datetime", fmt.Sprintf("%s/%s", start, end))
+	q.Set("limit", "10000")
+	u.RawQuery = q.Encode()
+
+	return c.fetchFeatureCollection(ctx, u.String())
+}
+
+func (c *Client) fetchFeatureCollection(ctx context.Context, reqURL string) (*FeatureCollection, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -155,6 +183,18 @@ type Reading struct {
 	FetchedAt  time.Time `json:"fetched_at"`
 }
 
+type HistoricalPoint struct {
+	Time  time.Time `json:"time"`
+	Value float64   `json:"value"`
+}
+
+type HistoryResponse struct {
+	Station  string            `json:"station"`
+	Unit     string            `json:"unit"`
+	FullPool float64           `json:"full_pool"`
+	Points   []HistoricalPoint `json:"points"`
+}
+
 // ---- State goroutine -------------------------------------------------------
 
 // stateLoop owns the latest Reading. Other goroutines communicate with it
@@ -182,7 +222,7 @@ func fetchLoop(client *Client, updates chan<- Reading, done <-chan struct{}) {
 	fetch <- struct{}{} // immediate fetch on startup
 
 	doFetch := func() {
-		fc, err := client.GetLatestContinuous(context.Background(), "USGS-12371550", "00062")
+		fc, err := client.GetLatestContinuous(context.Background(), defaultStationID, defaultParameter)
 		if err != nil {
 			log.Printf("[fetch] error: %v", err)
 			return
@@ -218,298 +258,29 @@ func fetchLoop(client *Client, updates chan<- Reading, done <-chan struct{}) {
 
 // ---- HTTP handlers ---------------------------------------------------------
 
-const indexHTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Flathead Lake Level</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+func serveEmbeddedHTML(w http.ResponseWriter, filename string) {
+	data, err := htmlFS.ReadFile("html/" + filename)
+	if err != nil {
+		http.Error(w, "file not found", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(data)
+}
 
-    body {
-      font-family: Georgia, "Times New Roman", serif;
-      min-height: 100vh;
-      background: #0a1f2e;
-      color: #e8f4f8;
-      display: flex;
-      flex-direction: column;
-    }
-
-    /* ---------- sky + mountains + water scene ---------- */
-    .scene {
-      position: relative;
-      width: 100%;
-      height: 260px;
-      overflow: hidden;
-      flex-shrink: 0;
-    }
-
-    /* Sky gradient — deep Montana blue at top, warm horizon near dusk */
-    .sky {
-      position: absolute; inset: 0;
-      background: linear-gradient(to bottom,
-        #0d2a4a 0%,
-        #1a4a7a 40%,
-        #2e6da4 70%,
-        #5fa8c8 100%);
-    }
-
-    /* Sun glow on the horizon */
-    .sun-glow {
-      position: absolute;
-      bottom: 90px; left: 50%;
-      transform: translateX(-50%);
-      width: 340px; height: 100px;
-      background: radial-gradient(ellipse at center,
-        rgba(255,210,120,0.35) 0%,
-        rgba(255,160,60,0.12) 55%,
-        transparent 80%);
-    }
-
-    /* Mission Mountain silhouette — SVG inline */
-    .mountains {
-      position: absolute;
-      bottom: 70px; left: 0; right: 0;
-    }
-
-    /* Water reflection */
-    .water {
-      position: absolute;
-      bottom: 0; left: 0; right: 0;
-      height: 80px;
-      background: linear-gradient(to bottom,
-        #1e6fa8 0%,
-        #155a8a 50%,
-        #0e3d5e 100%);
-    }
-
-    /* ripple lines */
-    .water::after {
-      content: "";
-      position: absolute;
-      inset: 0;
-      background: repeating-linear-gradient(
-        to bottom,
-        transparent 0px,
-        transparent 10px,
-        rgba(255,255,255,0.04) 10px,
-        rgba(255,255,255,0.04) 11px
-      );
-    }
-
-    /* ---------- page content ---------- */
-    .page {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 2rem 1rem 3rem;
-      background: linear-gradient(to bottom, #0e3d5e, #0a2233);
-    }
-
-    .headline {
-      text-align: center;
-      margin-bottom: 2rem;
-    }
-    .headline h1 {
-      font-size: 2rem;
-      font-weight: normal;
-      letter-spacing: 0.04em;
-      color: #c8e8f5;
-      text-shadow: 0 1px 8px rgba(0,0,0,0.6);
-    }
-    .headline .tagline {
-      margin-top: 0.35rem;
-      font-size: 0.82rem;
-      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
-      color: #7aaccc;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
-
-    /* ---------- gauge card ---------- */
-    .card {
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 12px;
-      padding: 2rem 2.5rem;
-      max-width: 440px;
-      width: 100%;
-      text-align: center;
-      backdrop-filter: blur(4px);
-    }
-
-    .gauge-label {
-      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
-      font-size: 0.72rem;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      color: #7aaccc;
-      margin-bottom: 0.5rem;
-    }
-
-    .level-value {
-      font-size: 4.5rem;
-      font-weight: bold;
-      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
-      color: #7dd4f8;
-      line-height: 1;
-      text-shadow: 0 0 24px rgba(100,200,240,0.4);
-    }
-
-    .level-unit {
-      font-size: 1.1rem;
-      color: #7aaccc;
-      margin-left: 6px;
-      vertical-align: middle;
-    }
-
-    /* water level bar */
-    .bar-wrap {
-      margin: 1.4rem auto 0;
-      width: 80%;
-      height: 10px;
-      background: rgba(255,255,255,0.1);
-      border-radius: 6px;
-      overflow: hidden;
-    }
-    .bar-fill {
-      height: 100%;
-      border-radius: 6px;
-      background: linear-gradient(to right, #1a6ea8, #7dd4f8);
-      transition: width 0.8s ease;
-    }
-
-    .divider {
-      margin: 1.5rem auto;
-      width: 60%;
-      border: none;
-      border-top: 1px solid rgba(255,255,255,0.1);
-    }
-
-    .meta {
-      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
-      font-size: 0.82rem;
-      color: #7aaccc;
-      line-height: 2;
-      text-align: left;
-    }
-    .meta .label { color: #4a8aaa; }
-    .meta .value { color: #c8e8f5; font-weight: 600; }
-
-    .diff-line {
-      margin-top: 0.6rem;
-      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
-      font-size: 0.85rem;
-      font-weight: 600;
-    }
-    .diff-above { color: #4ecb8d; }
-    .diff-below { color: #f4a44a; }
-
-    .loading {
-      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
-      font-size: 0.9rem;
-      color: #7aaccc;
-      font-style: italic;
-    }
-
-    /* ---------- footer ---------- */
-    footer {
-      text-align: center;
-      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
-      font-size: 0.72rem;
-      color: #3a6a88;
-      padding: 1.5rem 1rem;
-      border-top: 1px solid rgba(255,255,255,0.06);
-      letter-spacing: 0.04em;
-    }
-  </style>
-</head>
-<body>
-
-  <!-- Scenic header -->
-  <div class="scene">
-    <div class="sky"></div>
-    <div class="sun-glow"></div>
-    <!-- Mission Mountains silhouette -->
-    <svg class="mountains" viewBox="0 0 1200 120" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
-      <polygon points="0,120 0,80 60,50 120,70 200,20 280,65 340,30 400,60 460,10 520,55 580,25 640,60 700,15 760,50 820,30 880,55 940,20 1000,60 1060,35 1120,55 1200,40 1200,120" fill="#0d1e2e"/>
-      <!-- snow caps -->
-      <polygon points="200,20 220,35 180,38" fill="rgba(230,240,250,0.7)"/>
-      <polygon points="460,10 480,28 440,30" fill="rgba(230,240,250,0.7)"/>
-      <polygon points="580,25 598,42 562,43" fill="rgba(230,240,250,0.7)"/>
-      <polygon points="700,15 720,33 680,35" fill="rgba(230,240,250,0.7)"/>
-      <polygon points="940,20 958,37 922,39" fill="rgba(230,240,250,0.7)"/>
-    </svg>
-    <div class="water"></div>
-  </div>
-
-  <!-- Main content -->
-  <div class="page">
-    <div class="headline">
-      <h1>Flathead Lake</h1>
-      <div class="tagline">Pool Level · USGS Station 12371550 · Refreshes every 60 s</div>
-      <div class="tagline" id="full-pool-line">Summer Full Pool: — ft</div>
-    </div>
-
-    <div class="card" id="card">
-      <div class="loading">Fetching latest reading…</div>
-    </div>
-  </div>
-
-  <footer>Data sourced from USGS Water Resources · Polson, Montana</footer>
-
-  <script>
-    // Flathead Lake elevation range (ft above sea level) for the progress bar
-    const LOW = 2877, HIGH = 2893;
-
-    function load() {
-      fetch('/data')
-        .then(r => r.json())
-        .then(d => {
-          const card = document.getElementById('card');
-          if (!d.station) {
-            card.innerHTML = '<div class="loading">Waiting for first reading…</div>';
-            return;
-          }
-          document.getElementById('full-pool-line').textContent =
-            'Summer Full Pool: ' + d.full_pool.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' ft';
-          const pct = Math.min(100, Math.max(0, ((d.value - LOW) / (HIGH - LOW)) * 100));
-          const diffAbs = Math.abs(d.delta).toFixed(2);
-          const diffLabel = d.delta >= 0
-            ? '<span class="diff-above">▲ ' + diffAbs + ' ft above full pool</span>'
-            : '<span class="diff-below">▼ ' + diffAbs + ' ft below full pool</span>';
-          const measured = new Date(d.measured_at).toLocaleString('en-US', {month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'});
-          const fetched  = new Date(d.fetched_at).toLocaleString('en-US', {hour:'numeric',minute:'2-digit',second:'2-digit',timeZoneName:'short'});
-          card.innerHTML =
-            '<div class="gauge-label">Current Pool Elevation</div>' +
-            '<div class="level-value">' + d.value.toFixed(2) + '<span class="level-unit">' + d.unit + '</span></div>' +
-            '<div class="diff-line">' + diffLabel + '</div>' +
-            '<div class="bar-wrap"><div class="bar-fill" style="width:' + pct.toFixed(1) + '%"></div></div>' +
-            '<hr class="divider">' +
-            '<div class="meta">' +
-              '<div><span class="label">Station &nbsp;&nbsp;&nbsp;</span><span class="value">' + d.station + '</span></div>' +
-              '<div><span class="label">Measured &nbsp;</span><span class="value">' + measured + '</span></div>' +
-              '<div><span class="label">Fetched &nbsp;&nbsp;</span><span class="value">' + fetched + '</span></div>' +
-            '</div>';
-        })
-        .catch(() => {
-          document.getElementById('card').innerHTML = '<div class="loading">Unable to load data.</div>';
-        });
-    }
-    load();
-    setInterval(load, 60000);
-  </script>
-</body>
-</html>`
-
-func newMux(queries chan<- chan<- Reading) *http.ServeMux {
+func newMux(client *Client, queries chan<- chan<- Reading) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, indexHTML)
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		serveEmbeddedHTML(w, "index.html")
+	})
+
+	mux.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
+		serveEmbeddedHTML(w, "history.html")
 	})
 
 	mux.HandleFunc("/data", func(w http.ResponseWriter, r *http.Request) {
@@ -518,6 +289,62 @@ func newMux(queries chan<- chan<- Reading) *http.ServeMux {
 		reading := <-reply
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(reading)
+	})
+
+	mux.HandleFunc("/data/history", func(w http.ResponseWriter, r *http.Request) {
+		start := r.URL.Query().Get("start")
+		end := r.URL.Query().Get("end")
+
+		if start == "" || end == "" {
+			http.Error(w, "start and end query parameters are required", http.StatusBadRequest)
+			return
+		}
+
+		startTime, err := time.Parse(time.RFC3339, start)
+		if err != nil {
+			http.Error(w, "invalid start time format, expected RFC3339", http.StatusBadRequest)
+			return
+		}
+
+		endTime, err := time.Parse(time.RFC3339, end)
+		if err != nil {
+			http.Error(w, "invalid end time format, expected RFC3339", http.StatusBadRequest)
+			return
+		}
+
+		fc, err := client.GetContinuousHistory(r.Context(), defaultStationID, defaultParameter, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
+		if err != nil {
+			log.Printf("[history] error fetching USGS data: %v", err)
+			http.Error(w, fmt.Sprintf("failed to fetch historical data: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		points := make([]HistoricalPoint, 0, len(fc.Features))
+		unit := "ft"
+		station := defaultStationID
+
+		for _, feat := range fc.Features {
+			if feat.Properties.UnitOfMeasure != "" {
+				unit = feat.Properties.UnitOfMeasure
+			}
+			if feat.Properties.MonitoringLocationID != "" {
+				station = feat.Properties.MonitoringLocationID
+			}
+			points = append(points, HistoricalPoint{
+				Time:  feat.Properties.Time,
+				Value: float64(feat.Properties.Value),
+			})
+		}
+
+		resp := HistoryResponse{
+			Station:  station,
+			Unit:     unit,
+			FullPool: summerFullPool,
+			Points:   points,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 	})
 
 	return mux
@@ -541,7 +368,7 @@ func main() {
 	// HTTP server.
 	srv := &http.Server{
 		Addr:    ":8080",
-		Handler: newMux(queries),
+		Handler: newMux(client, queries),
 	}
 	go func() {
 		log.Printf("[http] listening on http://localhost:8080")

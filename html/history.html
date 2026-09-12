@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flathead Lake - Historical Data & Chart</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Georgia, "Times New Roman", serif;
+      min-height: 100vh;
+      background: #0a1f2e;
+      color: #e8f4f8;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---------- Top navigation bar & Hamburger menu ---------- */
+    .top-nav {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 60px;
+      padding: 0 1.25rem;
+      display: flex;
+      align-items: center;
+      z-index: 100;
+    }
+    .hamburger-btn {
+      background: rgba(10, 31, 46, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
+      width: 40px;
+      height: 40px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      backdrop-filter: blur(4px);
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .hamburger-btn:hover {
+      background: rgba(10, 31, 46, 0.85);
+      border-color: rgba(125, 212, 248, 0.5);
+    }
+    .hamburger-btn span {
+      display: block;
+      width: 20px;
+      height: 2px;
+      background: #e8f4f8;
+      border-radius: 2px;
+    }
+    .drawer-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.3s, visibility 0.3s;
+      z-index: 200;
+    }
+    .drawer-overlay.open {
+      opacity: 1;
+      visibility: visible;
+    }
+    .nav-drawer {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 280px;
+      background: #081722;
+      border-right: 1px solid rgba(255, 255, 255, 0.12);
+      transform: translateX(-100%);
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 201;
+      display: flex;
+      flex-direction: column;
+      padding: 1.5rem 1.25rem;
+      box-shadow: 4px 0 24px rgba(0,0,0,0.5);
+    }
+    .nav-drawer.open {
+      transform: translateX(0);
+    }
+    .drawer-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .drawer-title {
+      font-size: 1.15rem;
+      color: #c8e8f5;
+      font-weight: normal;
+      letter-spacing: 0.05em;
+    }
+    .drawer-close-btn {
+      background: none;
+      border: none;
+      color: #7aaccc;
+      font-size: 1.5rem;
+      cursor: pointer;
+      line-height: 1;
+      padding: 0.2rem 0.5rem;
+    }
+    .drawer-close-btn:hover {
+      color: #fff;
+    }
+    .nav-links {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    .nav-link {
+      display: block;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.95rem;
+      color: #7aaccc;
+      text-decoration: none;
+      padding: 0.65rem 0.9rem;
+      border-radius: 6px;
+      transition: background 0.15s, color 0.15s;
+    }
+    .nav-link:hover {
+      background: rgba(255, 255, 255, 0.06);
+      color: #7dd4f8;
+    }
+    .nav-link.active {
+      background: rgba(125, 212, 248, 0.15);
+      color: #7dd4f8;
+      font-weight: 600;
+    }
+
+    /* ---------- sky + mountains scene ---------- */
+    .scene {
+      position: relative;
+      width: 100%;
+      height: 180px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    .sky {
+      position: absolute; inset: 0;
+      background: linear-gradient(to bottom,
+        #0d2a4a 0%,
+        #1a4a7a 40%,
+        #2e6da4 70%,
+        #5fa8c8 100%);
+    }
+
+    .sun-glow {
+      position: absolute;
+      bottom: 50px; left: 50%;
+      transform: translateX(-50%);
+      width: 300px; height: 80px;
+      background: radial-gradient(ellipse at center,
+        rgba(255,210,120,0.35) 0%,
+        rgba(255,160,60,0.12) 55%,
+        transparent 80%);
+    }
+
+    .mountains {
+      position: absolute;
+      bottom: 40px; left: 0; right: 0;
+    }
+
+    .water {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 45px;
+      background: linear-gradient(to bottom,
+        #1e6fa8 0%,
+        #155a8a 50%,
+        #0e3d5e 100%);
+    }
+
+    .water::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        to bottom,
+        transparent 0px,
+        transparent 10px,
+        rgba(255,255,255,0.04) 10px,
+        rgba(255,255,255,0.04) 11px
+      );
+    }
+
+    /* ---------- page content ---------- */
+    .page {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 1.5rem 1rem 3rem;
+      background: linear-gradient(to bottom, #0e3d5e, #0a2233);
+    }
+
+    .headline {
+      text-align: center;
+      margin-bottom: 1.5rem;
+    }
+    .headline h1 {
+      font-size: 1.85rem;
+      font-weight: normal;
+      letter-spacing: 0.04em;
+      color: #c8e8f5;
+      text-shadow: 0 1px 8px rgba(0,0,0,0.6);
+    }
+    .headline .tagline {
+      margin-top: 0.35rem;
+      font-size: 0.82rem;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      color: #7aaccc;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    /* ---------- query form card ---------- */
+    .controls-card {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px;
+      padding: 1.25rem 1.75rem;
+      max-width: 900px;
+      width: 100%;
+      margin-bottom: 1.5rem;
+      backdrop-filter: blur(4px);
+    }
+
+    .form-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      align-items: flex-end;
+      justify-content: center;
+    }
+
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      flex: 1;
+      min-width: 200px;
+    }
+
+    .input-group label {
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.75rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #7aaccc;
+      font-weight: 600;
+    }
+
+    .input-group input {
+      background: rgba(10, 31, 46, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 6px;
+      color: #e8f4f8;
+      padding: 0.6rem 0.8rem;
+      font-size: 0.9rem;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .input-group input:focus {
+      border-color: #7dd4f8;
+    }
+
+    .btn-submit {
+      background: #1a6ea8;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 6px;
+      color: #ffffff;
+      padding: 0.65rem 1.4rem;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      align-self: flex-end;
+      height: 40px;
+    }
+
+    .btn-submit:hover {
+      background: #2385c7;
+    }
+
+    .btn-submit:active {
+      transform: scale(0.98);
+    }
+
+    /* Preset buttons */
+    .presets {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin-top: 0.9rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      align-items: center;
+    }
+    .presets-label {
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.72rem;
+      color: #4a8aaa;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .preset-btn {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 4px;
+      color: #7aaccc;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.75rem;
+      padding: 0.3rem 0.6rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .preset-btn:hover {
+      background: rgba(125,212,248,0.15);
+      color: #7dd4f8;
+      border-color: rgba(125,212,248,0.3);
+    }
+
+    /* ---------- chart card ---------- */
+    .chart-card {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px;
+      padding: 1.5rem;
+      max-width: 900px;
+      width: 100%;
+      backdrop-filter: blur(4px);
+    }
+
+    .chart-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .chart-title {
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.85rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #7aaccc;
+    }
+
+    .legend {
+      display: flex;
+      gap: 1.25rem;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.78rem;
+      color: #c8e8f5;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .legend-color {
+      width: 14px;
+      height: 3px;
+      border-radius: 2px;
+    }
+
+    .canvas-container {
+      position: relative;
+      width: 100%;
+      height: 420px;
+    }
+
+    .status-msg {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 320px;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.95rem;
+      color: #7aaccc;
+      font-style: italic;
+    }
+
+    /* ---------- footer ---------- */
+    footer {
+      text-align: center;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.72rem;
+      color: #3a6a88;
+      padding: 1.5rem 1rem;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      letter-spacing: 0.04em;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3"></script>
+</head>
+<body>
+
+  <!-- Drawer overlay & navigation -->
+  <div class="drawer-overlay" id="drawerOverlay" onclick="toggleMenu(false)"></div>
+  <aside class="nav-drawer" id="navDrawer" aria-label="Main Navigation">
+    <div class="drawer-header">
+      <div class="drawer-title">Flathead Lake</div>
+      <button class="drawer-close-btn" onclick="toggleMenu(false)" aria-label="Close menu">&times;</button>
+    </div>
+    <ul class="nav-links">
+      <li><a href="/" class="nav-link">Current Level</a></li>
+      <li><a href="/history" class="nav-link active">Historical Query & Chart</a></li>
+    </ul>
+  </aside>
+
+  <!-- Scenic header -->
+  <div class="scene">
+    <div class="top-nav">
+      <button class="hamburger-btn" onclick="toggleMenu(true)" aria-label="Open navigation menu">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+    </div>
+    <div class="sky"></div>
+    <div class="sun-glow"></div>
+    <svg class="mountains" viewBox="0 0 1200 120" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,120 0,80 60,50 120,70 200,20 280,65 340,30 400,60 460,10 520,55 580,25 640,60 700,15 760,50 820,30 880,55 940,20 1000,60 1060,35 1120,55 1200,40 1200,120" fill="#0d1e2e"/>
+      <polygon points="200,20 220,35 180,38" fill="rgba(230,240,250,0.7)"/>
+      <polygon points="460,10 480,28 440,30" fill="rgba(230,240,250,0.7)"/>
+      <polygon points="580,25 598,42 562,43" fill="rgba(230,240,250,0.7)"/>
+      <polygon points="700,15 720,33 680,35" fill="rgba(230,240,250,0.7)"/>
+      <polygon points="940,20 958,37 922,39" fill="rgba(230,240,250,0.7)"/>
+    </svg>
+    <div class="water"></div>
+  </div>
+
+  <!-- Main content -->
+  <div class="page">
+    <div class="headline">
+      <h1>Flathead Lake Historical Elevation</h1>
+      <div class="tagline">USGS Station 12371550 · Elevation Over Time</div>
+    </div>
+
+    <div class="controls-card">
+      <form id="queryForm" onsubmit="handleQuery(event)">
+        <div class="form-row">
+          <div class="input-group">
+            <label for="startTime">Start Time (Local)</label>
+            <input type="datetime-local" id="startTime" required>
+          </div>
+          <div class="input-group">
+            <label for="endTime">End Time (Local)</label>
+            <input type="datetime-local" id="endTime" required>
+          </div>
+          <button type="submit" class="btn-submit" id="btnQuery">Load Data</button>
+        </div>
+      </form>
+      <div class="presets">
+        <span class="presets-label">Quick Presets:</span>
+        <button type="button" class="preset-btn" onclick="applyPreset(1)">Last 24 Hours</button>
+        <button type="button" class="preset-btn" onclick="applyPreset(7)">Last 7 Days</button>
+        <button type="button" class="preset-btn" onclick="applyPreset(30)">Last 30 Days</button>
+        <button type="button" class="preset-btn" onclick="applyPreset(90)">Last 90 Days</button>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-header">
+        <div class="chart-title" id="chartStatusTitle">Water Surface Elevation</div>
+        <div class="legend">
+          <div class="legend-item">
+            <div class="legend-color" style="background:#7dd4f8;"></div>
+            <span>Lake Elevation (ft)</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-color" style="background:#f4a44a; border-top: 1px dashed #f4a44a;"></div>
+            <span id="fullPoolLegend">Summer Full Pool (2,893.00 ft)</span>
+          </div>
+        </div>
+      </div>
+      <div class="canvas-container" id="canvasContainer">
+        <canvas id="historyChart"></canvas>
+      </div>
+      <div class="status-msg" id="statusMessage" style="display:none;"></div>
+    </div>
+  </div>
+
+  <footer>Data sourced from USGS Water Resources · Polson, Montana</footer>
+
+  <script>
+    function toggleMenu(open) {
+      document.getElementById('navDrawer').classList.toggle('open', open);
+      document.getElementById('drawerOverlay').classList.toggle('open', open);
+    }
+
+    let chartInstance = null;
+
+    function formatLocalDatetime(d) {
+      const pad = n => String(n).padStart(2, '0');
+      return d.getFullYear() + '-' +
+        pad(d.getMonth() + 1) + '-' +
+        pad(d.getDate()) + 'T' +
+        pad(d.getHours()) + ':' +
+        pad(d.getMinutes());
+    }
+
+    function applyPreset(days) {
+      const now = new Date();
+      const past = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+      document.getElementById('startTime').value = formatLocalDatetime(past);
+      document.getElementById('endTime').value = formatLocalDatetime(now);
+      fetchHistoricalData();
+    }
+
+    function handleQuery(e) {
+      e.preventDefault();
+      fetchHistoricalData();
+    }
+
+    function setStatus(msg) {
+      const statusEl = document.getElementById('statusMessage');
+      const canvasEl = document.getElementById('historyChart');
+      if (msg) {
+        statusEl.textContent = msg;
+        statusEl.style.display = 'flex';
+        canvasEl.style.display = 'none';
+      } else {
+        statusEl.style.display = 'none';
+        canvasEl.style.display = 'block';
+      }
+    }
+
+    function fetchHistoricalData() {
+      const startVal = document.getElementById('startTime').value;
+      const endVal = document.getElementById('endTime').value;
+      if (!startVal || !endVal) return;
+
+      const startDate = new Date(startVal);
+      const endDate = new Date(endVal);
+
+      if (startDate >= endDate) {
+        alert("Start time must be before end time.");
+        return;
+      }
+
+      setStatus("Fetching historical measurements from USGS...");
+      const startISO = startDate.toISOString();
+      const endISO = endDate.toISOString();
+
+      const btn = document.getElementById('btnQuery');
+      btn.disabled = true;
+      btn.textContent = "Loading...";
+
+      fetch('/data/history?start=' + encodeURIComponent(startISO) + '&end=' + encodeURIComponent(endISO))
+        .then(r => {
+          if (!r.ok) {
+            return r.text().then(text => { throw new Error(text || 'HTTP ' + r.status); });
+          }
+          return r.json();
+        })
+        .then(data => {
+          btn.disabled = false;
+          btn.textContent = "Load Data";
+
+          if (!data.points || data.points.length === 0) {
+            setStatus("No observation data found for the selected time range.");
+            return;
+          }
+
+          setStatus(null);
+          renderChart(data);
+        })
+        .catch(err => {
+          btn.disabled = false;
+          btn.textContent = "Load Data";
+          setStatus("Error retrieving historical data: " + err.message);
+        });
+    }
+
+    function renderChart(data) {
+      const fullPool = data.full_pool;
+      document.getElementById('fullPoolLegend').textContent =
+        'Summer Full Pool (' + fullPool.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' ' + (data.unit || 'ft') + ')';
+
+      const points = data.points.map(p => ({
+        x: new Date(p.time),
+        y: p.value
+      }));
+
+      // Calculate y-axis bounds to make sure the full pool line and data are well visible
+      const values = data.points.map(p => p.value);
+      const minVal = Math.min(...values, fullPool);
+      const maxVal = Math.max(...values, fullPool);
+      const padding = Math.max((maxVal - minVal) * 0.1, 0.5);
+
+      const ctx = document.getElementById('historyChart').getContext('2d');
+
+      if (chartInstance) {
+        chartInstance.destroy();
+      }
+
+      // Create gradient for fill
+      const gradient = ctx.createLinearGradient(0, 0, 0, 380);
+      gradient.addColorStop(0, 'rgba(125, 212, 248, 0.35)');
+      gradient.addColorStop(1, 'rgba(30, 111, 168, 0.02)');
+
+      const isAnnotationAvailable = typeof ChartAnnotation !== 'undefined' || (Chart.registry && Chart.registry.plugins.get('annotation'));
+
+      const pluginsConfig = {
+        legend: { display: false },
+        tooltip: {
+          mode: 'index',
+          intersect: false,
+          backgroundColor: 'rgba(8, 23, 34, 0.9)',
+          titleColor: '#c8e8f5',
+          bodyColor: '#7dd4f8',
+          borderColor: 'rgba(255, 255, 255, 0.15)',
+          borderWidth: 1,
+          padding: 10,
+          callbacks: {
+            label: function(context) {
+              const val = context.parsed.y;
+              const diff = (val - fullPool).toFixed(2);
+              const diffText = diff >= 0 ? '(+' + diff + ' ft full pool)' : '(' + diff + ' ft full pool)';
+              return ' Elevation: ' + val.toFixed(2) + ' ' + (data.unit || 'ft') + ' ' + diffText;
+            }
+          }
+        }
+      };
+
+      const datasets = [
+        {
+          label: 'Lake Elevation',
+          data: points,
+          borderColor: '#7dd4f8',
+          backgroundColor: gradient,
+          borderWidth: 2,
+          pointRadius: points.length > 200 ? 0 : 2,
+          pointHoverRadius: 5,
+          pointHoverBackgroundColor: '#ffffff',
+          pointHoverBorderColor: '#7dd4f8',
+          fill: true,
+          tension: 0.15
+        }
+      ];
+
+      // Add full pool line dataset so it always renders seamlessly
+      datasets.push({
+        label: 'Full Pool Reference',
+        data: [
+          { x: points[0].x, y: fullPool },
+          { x: points[points.length - 1].x, y: fullPool }
+        ],
+        borderColor: '#f4a44a',
+        borderWidth: 2,
+        borderDash: [6, 6],
+        pointRadius: 0,
+        fill: false
+      });
+
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: { datasets: datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: {
+            mode: 'nearest',
+            axis: 'x',
+            intersect: false
+          },
+          scales: {
+            x: {
+              type: 'time',
+              time: {
+                displayFormats: {
+                  hour: 'MMM d, h:mm a',
+                  day: 'MMM d',
+                  month: 'MMM yyyy'
+                }
+              },
+              grid: {
+                color: 'rgba(255, 255, 255, 0.07)'
+              },
+              ticks: {
+                color: '#7aaccc',
+                maxRotation: 0,
+                autoSkip: true,
+                maxTicksLimit: 7
+              }
+            },
+            y: {
+              min: Math.floor((minVal - padding) * 10) / 10,
+              max: Math.ceil((maxVal + padding) * 10) / 10,
+              grid: {
+                color: 'rgba(255, 255, 255, 0.07)'
+              },
+              ticks: {
+                color: '#7aaccc',
+                callback: function(v) { return v.toFixed(2) + ' ' + (data.unit || 'ft'); }
+              }
+            }
+          },
+          plugins: pluginsConfig
+        }
+      });
+    }
+
+    // Default to last 7 days on initial load
+    applyPreset(7);
+  </script>
+</body>
+</html>

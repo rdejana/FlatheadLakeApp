@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flathead Lake Level</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Georgia, "Times New Roman", serif;
+      min-height: 100vh;
+      background: #0a1f2e;
+      color: #e8f4f8;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---------- Top navigation bar & Hamburger menu ---------- */
+    .top-nav {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 60px;
+      padding: 0 1.25rem;
+      display: flex;
+      align-items: center;
+      z-index: 100;
+    }
+    .hamburger-btn {
+      background: rgba(10, 31, 46, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
+      width: 40px;
+      height: 40px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      backdrop-filter: blur(4px);
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .hamburger-btn:hover {
+      background: rgba(10, 31, 46, 0.85);
+      border-color: rgba(125, 212, 248, 0.5);
+    }
+    .hamburger-btn span {
+      display: block;
+      width: 20px;
+      height: 2px;
+      background: #e8f4f8;
+      border-radius: 2px;
+    }
+    .drawer-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.3s, visibility 0.3s;
+      z-index: 200;
+    }
+    .drawer-overlay.open {
+      opacity: 1;
+      visibility: visible;
+    }
+    .nav-drawer {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 280px;
+      background: #081722;
+      border-right: 1px solid rgba(255, 255, 255, 0.12);
+      transform: translateX(-100%);
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 201;
+      display: flex;
+      flex-direction: column;
+      padding: 1.5rem 1.25rem;
+      box-shadow: 4px 0 24px rgba(0,0,0,0.5);
+    }
+    .nav-drawer.open {
+      transform: translateX(0);
+    }
+    .drawer-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .drawer-title {
+      font-size: 1.15rem;
+      color: #c8e8f5;
+      font-weight: normal;
+      letter-spacing: 0.05em;
+    }
+    .drawer-close-btn {
+      background: none;
+      border: none;
+      color: #7aaccc;
+      font-size: 1.5rem;
+      cursor: pointer;
+      line-height: 1;
+      padding: 0.2rem 0.5rem;
+    }
+    .drawer-close-btn:hover {
+      color: #fff;
+    }
+    .nav-links {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    .nav-link {
+      display: block;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.95rem;
+      color: #7aaccc;
+      text-decoration: none;
+      padding: 0.65rem 0.9rem;
+      border-radius: 6px;
+      transition: background 0.15s, color 0.15s;
+    }
+    .nav-link:hover {
+      background: rgba(255, 255, 255, 0.06);
+      color: #7dd4f8;
+    }
+    .nav-link.active {
+      background: rgba(125, 212, 248, 0.15);
+      color: #7dd4f8;
+      font-weight: 600;
+    }
+
+    /* ---------- sky + mountains + water scene ---------- */
+    .scene {
+      position: relative;
+      width: 100%;
+      height: 260px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    /* Sky gradient — deep Montana blue at top, warm horizon near dusk */
+    .sky {
+      position: absolute; inset: 0;
+      background: linear-gradient(to bottom,
+        #0d2a4a 0%,
+        #1a4a7a 40%,
+        #2e6da4 70%,
+        #5fa8c8 100%);
+    }
+
+    /* Sun glow on the horizon */
+    .sun-glow {
+      position: absolute;
+      bottom: 90px; left: 50%;
+      transform: translateX(-50%);
+      width: 340px; height: 100px;
+      background: radial-gradient(ellipse at center,
+        rgba(255,210,120,0.35) 0%,
+        rgba(255,160,60,0.12) 55%,
+        transparent 80%);
+    }
+
+    /* Mission Mountain silhouette — SVG inline */
+    .mountains {
+      position: absolute;
+      bottom: 70px; left: 0; right: 0;
+    }
+
+    /* Water reflection */
+    .water {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 80px;
+      background: linear-gradient(to bottom,
+        #1e6fa8 0%,
+        #155a8a 50%,
+        #0e3d5e 100%);
+    }
+
+    /* ripple lines */
+    .water::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        to bottom,
+        transparent 0px,
+        transparent 10px,
+        rgba(255,255,255,0.04) 10px,
+        rgba(255,255,255,0.04) 11px
+      );
+    }
+
+    /* ---------- page content ---------- */
+    .page {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem 3rem;
+      background: linear-gradient(to bottom, #0e3d5e, #0a2233);
+    }
+
+    .headline {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+    .headline h1 {
+      font-size: 2rem;
+      font-weight: normal;
+      letter-spacing: 0.04em;
+      color: #c8e8f5;
+      text-shadow: 0 1px 8px rgba(0,0,0,0.6);
+    }
+    .headline .tagline {
+      margin-top: 0.35rem;
+      font-size: 0.82rem;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      color: #7aaccc;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    /* ---------- gauge card ---------- */
+    .card {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px;
+      padding: 2rem 2.5rem;
+      max-width: 440px;
+      width: 100%;
+      text-align: center;
+      backdrop-filter: blur(4px);
+    }
+
+    .gauge-label {
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.72rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #7aaccc;
+      margin-bottom: 0.5rem;
+    }
+
+    .level-value {
+      font-size: 4.5rem;
+      font-weight: bold;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      color: #7dd4f8;
+      line-height: 1;
+      text-shadow: 0 0 24px rgba(100,200,240,0.4);
+    }
+
+    .level-unit {
+      font-size: 1.1rem;
+      color: #7aaccc;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+
+    /* water level bar */
+    .bar-wrap {
+      margin: 1.4rem auto 0;
+      width: 80%;
+      height: 10px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      border-radius: 6px;
+      background: linear-gradient(to right, #1a6ea8, #7dd4f8);
+      transition: width 0.8s ease;
+    }
+
+    .divider {
+      margin: 1.5rem auto;
+      width: 60%;
+      border: none;
+      border-top: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .meta {
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.82rem;
+      color: #7aaccc;
+      line-height: 2;
+      text-align: left;
+    }
+    .meta .label { color: #4a8aaa; }
+    .meta .value { color: #c8e8f5; font-weight: 600; }
+
+    .diff-line {
+      margin-top: 0.6rem;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    .diff-above { color: #4ecb8d; }
+    .diff-below { color: #f4a44a; }
+
+    .loading {
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.9rem;
+      color: #7aaccc;
+      font-style: italic;
+    }
+
+    /* ---------- footer ---------- */
+    footer {
+      text-align: center;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.72rem;
+      color: #3a6a88;
+      padding: 1.5rem 1rem;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      letter-spacing: 0.04em;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Drawer overlay & navigation -->
+  <div class="drawer-overlay" id="drawerOverlay" onclick="toggleMenu(false)"></div>
+  <aside class="nav-drawer" id="navDrawer" aria-label="Main Navigation">
+    <div class="drawer-header">
+      <div class="drawer-title">Flathead Lake</div>
+      <button class="drawer-close-btn" onclick="toggleMenu(false)" aria-label="Close menu">&times;</button>
+    </div>
+    <ul class="nav-links">
+      <li><a href="/" class="nav-link active">Current Level</a></li>
+      <li><a href="/history" class="nav-link">Historical Query & Chart</a></li>
+    </ul>
+  </aside>
+
+  <!-- Scenic header -->
+  <div class="scene">
+    <div class="top-nav">
+      <button class="hamburger-btn" onclick="toggleMenu(true)" aria-label="Open navigation menu">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+    </div>
+    <div class="sky"></div>
+    <div class="sun-glow"></div>
+    <!-- Mission Mountains silhouette -->
+    <svg class="mountains" viewBox="0 0 1200 120" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,120 0,80 60,50 120,70 200,20 280,65 340,30 400,60 460,10 520,55 580,25 640,60 700,15 760,50 820,30 880,55 940,20 1000,60 1060,35 1120,55 1200,40 1200,120" fill="#0d1e2e"/>
+      <!-- snow caps -->
+      <polygon points="200,20 220,35 180,38" fill="rgba(230,240,250,0.7)"/>
+      <polygon points="460,10 480,28 440,30" fill="rgba(230,240,250,0.7)"/>
+      <polygon points="580,25 598,42 562,43" fill="rgba(230,240,250,0.7)"/>
+      <polygon points="700,15 720,33 680,35" fill="rgba(230,240,250,0.7)"/>
+      <polygon points="940,20 958,37 922,39" fill="rgba(230,240,250,0.7)"/>
+    </svg>
+    <div class="water"></div>
+  </div>
+
+  <!-- Main content -->
+  <div class="page">
+    <div class="headline">
+      <h1>Flathead Lake</h1>
+      <div class="tagline">Pool Level · USGS Station 12371550 · Refreshes every 60 s</div>
+      <div class="tagline" id="full-pool-line">Summer Full Pool: — ft</div>
+    </div>
+
+    <div class="card" id="card">
+      <div class="loading">Fetching latest reading…</div>
+    </div>
+  </div>
+
+  <footer>Data sourced from USGS Water Resources · Polson, Montana</footer>
+
+  <script>
+    function toggleMenu(open) {
+      document.getElementById('navDrawer').classList.toggle('open', open);
+      document.getElementById('drawerOverlay').classList.toggle('open', open);
+    }
+
+    // Flathead Lake elevation range (ft above sea level) for the progress bar
+    const LOW = 2877, HIGH = 2893;
+
+    function load() {
+      fetch('/data')
+        .then(r => r.json())
+        .then(d => {
+          const card = document.getElementById('card');
+          if (!d.station) {
+            card.innerHTML = '<div class="loading">Waiting for first reading…</div>';
+            return;
+          }
+          document.getElementById('full-pool-line').textContent =
+            'Summer Full Pool: ' + d.full_pool.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' ft';
+          const pct = Math.min(100, Math.max(0, ((d.value - LOW) / (HIGH - LOW)) * 100));
+          const diffAbs = Math.abs(d.delta).toFixed(2);
+          const diffLabel = d.delta >= 0
+            ? '<span class="diff-above">▲ ' + diffAbs + ' ft above full pool</span>'
+            : '<span class="diff-below">▼ ' + diffAbs + ' ft below full pool</span>';
+          const measured = new Date(d.measured_at).toLocaleString('en-US', {month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'});
+          const fetched  = new Date(d.fetched_at).toLocaleString('en-US', {hour:'numeric',minute:'2-digit',second:'2-digit',timeZoneName:'short'});
+          card.innerHTML =
+            '<div class="gauge-label">Current Pool Elevation</div>' +
+            '<div class="level-value">' + d.value.toFixed(2) + '<span class="level-unit">' + d.unit + '</span></div>' +
+            '<div class="diff-line">' + diffLabel + '</div>' +
+            '<div class="bar-wrap"><div class="bar-fill" style="width:' + pct.toFixed(1) + '%"></div></div>' +
+            '<hr class="divider">' +
+            '<div class="meta">' +
+              '<div><span class="label">Station &nbsp;&nbsp;&nbsp;</span><span class="value">' + d.station + '</span></div>' +
+              '<div><span class="label">Measured &nbsp;</span><span class="value">' + measured + '</span></div>' +
+              '<div><span class="label">Fetched &nbsp;&nbsp;</span><span class="value">' + fetched + '</span></div>' +
+            '</div>';
+        })
+        .catch(() => {
+          document.getElementById('card').innerHTML = '<div class="loading">Unable to load data.</div>';
+        });
+    }
+    load();
+    setInterval(load, 60000);
+  </script>
+</body>
+</html>
