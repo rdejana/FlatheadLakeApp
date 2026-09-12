@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"embed"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,7 +13,10 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -136,6 +141,24 @@ func (c *Client) GetContinuousHistory(ctx context.Context, locationID, parameter
 	return c.fetchFeatureCollection(ctx, u.String())
 }
 
+func (c *Client) GetPointContinuous(ctx context.Context, locationID, parameterCode string, point time.Time) (*FeatureCollection, error) {
+	u, err := url.Parse(continuousURL)
+	if err != nil {
+		return nil, err
+	}
+
+	q := u.Query()
+	q.Set("monitoring_location_id", locationID)
+	q.Set("parameter_code", parameterCode)
+	// Query starting at the requested timestamp with a 2-hour forward window to find the closest reading
+	endWindow := point.Add(2 * time.Hour)
+	q.Set("datetime", fmt.Sprintf("%s/%s", point.UTC().Format(time.RFC3339), endWindow.UTC().Format(time.RFC3339)))
+	q.Set("limit", "1")
+	u.RawQuery = q.Encode()
+
+	return c.fetchFeatureCollection(ctx, u.String())
+}
+
 func (c *Client) fetchFeatureCollection(ctx context.Context, reqURL string) (*FeatureCollection, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
@@ -193,6 +216,77 @@ type HistoryResponse struct {
 	Unit     string            `json:"unit"`
 	FullPool float64           `json:"full_pool"`
 	Points   []HistoricalPoint `json:"points"`
+}
+
+// BoatLog represents a record of launching or retrieving a boat on the lift.
+type BoatLog struct {
+	ID        string    `json:"id"`
+	Action    string    `json:"action"` // "in" (launch / season start) or "out" (haul / season end)
+	Rating    string    `json:"rating"` // "green" (no issues), "yellow" (minor issue / close), "red" (challenging)
+	LakeLevel float64   `json:"lake_level"`
+	Unit      string    `json:"unit"`
+	FullPool  float64   `json:"full_pool"`
+	Delta     float64   `json:"delta"`
+	LoggedAt  time.Time `json:"logged_at"` // Timestamp when the action occurred
+	Notes     string    `json:"notes,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// BoatStore defines the interface for boat log storage (ready for SQLite implementation later).
+type BoatStore interface {
+	GetAll() []BoatLog
+	Add(log BoatLog) BoatLog
+	Delete(id string) bool
+}
+
+// MemoryBoatStore is the in-memory implementation of BoatStore.
+type MemoryBoatStore struct {
+	mu   sync.RWMutex
+	logs map[string]BoatLog
+}
+
+func NewMemoryBoatStore() *MemoryBoatStore {
+	return &MemoryBoatStore{
+		logs: make(map[string]BoatLog),
+	}
+}
+
+func (s *MemoryBoatStore) GetAll() []BoatLog {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	res := make([]BoatLog, 0, len(s.logs))
+	for _, l := range s.logs {
+		res = append(res, l)
+	}
+	// Sort newest first
+	sort.Slice(res, func(i, j int) bool {
+		return res[i].LoggedAt.After(res[j].LoggedAt)
+	})
+	return res
+}
+
+func (s *MemoryBoatStore) Add(l BoatLog) BoatLog {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if l.ID == "" {
+		l.ID = fmt.Sprintf("log-%d", time.Now().UnixNano())
+	}
+	l.CreatedAt = time.Now()
+	s.logs[l.ID] = l
+	return l
+}
+
+func (s *MemoryBoatStore) Delete(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.logs[id]; exists {
+		delete(s.logs, id)
+		return true
+	}
+	return false
 }
 
 // ---- State goroutine -------------------------------------------------------
@@ -268,7 +362,7 @@ func serveEmbeddedHTML(w http.ResponseWriter, filename string) {
 	w.Write(data)
 }
 
-func newMux(client *Client, queries chan<- chan<- Reading) *http.ServeMux {
+func newMux(client *Client, queries chan<- chan<- Reading, boatStore BoatStore) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -281,6 +375,10 @@ func newMux(client *Client, queries chan<- chan<- Reading) *http.ServeMux {
 
 	mux.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
 		serveEmbeddedHTML(w, "history.html")
+	})
+
+	mux.HandleFunc("/boat", func(w http.ResponseWriter, r *http.Request) {
+		serveEmbeddedHTML(w, "boat.html")
 	})
 
 	mux.HandleFunc("/data", func(w http.ResponseWriter, r *http.Request) {
@@ -347,6 +445,335 @@ func newMux(client *Client, queries chan<- chan<- Reading) *http.ServeMux {
 		json.NewEncoder(w).Encode(resp)
 	})
 
+	mux.HandleFunc("/data/point", func(w http.ResponseWriter, r *http.Request) {
+		timeParam := r.URL.Query().Get("time")
+		if timeParam == "" {
+			http.Error(w, "time query parameter is required", http.StatusBadRequest)
+			return
+		}
+
+		pointTime, err := time.Parse(time.RFC3339, timeParam)
+		if err != nil {
+			http.Error(w, "invalid time format, expected RFC3339", http.StatusBadRequest)
+			return
+		}
+
+		fc, err := client.GetPointContinuous(r.Context(), defaultStationID, defaultParameter, pointTime)
+		if err != nil {
+			log.Printf("[point] error fetching USGS data: %v", err)
+			http.Error(w, fmt.Sprintf("failed to fetch data: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		if len(fc.Features) == 0 {
+			http.Error(w, "no reading found for the specified point in time", http.StatusNotFound)
+			return
+		}
+
+		p := fc.Features[0].Properties
+		value := float64(p.Value)
+		resp := Reading{
+			Station:    p.MonitoringLocationID,
+			Value:      value,
+			Unit:       p.UnitOfMeasure,
+			FullPool:   summerFullPool,
+			Delta:      value - summerFullPool,
+			MeasuredAt: p.Time,
+			FetchedAt:  time.Now(),
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	})
+
+	mux.HandleFunc("/api/boat-logs", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			logs := boatStore.GetAll()
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(logs)
+
+		case http.MethodPost:
+			var req struct {
+				Action    string    `json:"action"`
+				Rating    string    `json:"rating"`
+				LoggedAt  time.Time `json:"logged_at"`
+				LakeLevel *float64  `json:"lake_level,omitempty"`
+				Notes     string    `json:"notes"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "invalid request body", http.StatusBadRequest)
+				return
+			}
+			if req.Action != "in" && req.Action != "out" {
+				http.Error(w, "action must be 'in' or 'out'", http.StatusBadRequest)
+				return
+			}
+			if req.Rating != "green" && req.Rating != "yellow" && req.Rating != "red" {
+				http.Error(w, "rating must be 'green', 'yellow', or 'red'", http.StatusBadRequest)
+				return
+			}
+			if req.LoggedAt.IsZero() {
+				req.LoggedAt = time.Now()
+			}
+
+			lakeLevel := 0.0
+			unit := "ft"
+
+			if req.LakeLevel != nil {
+				lakeLevel = *req.LakeLevel
+			} else {
+				// Query USGS API for the lake level at this timestamp
+				fc, err := client.GetPointContinuous(r.Context(), defaultStationID, defaultParameter, req.LoggedAt)
+				if err == nil && len(fc.Features) > 0 {
+					p := fc.Features[0].Properties
+					lakeLevel = float64(p.Value)
+					if p.UnitOfMeasure != "" {
+						unit = p.UnitOfMeasure
+					}
+				} else {
+					// Fallback to latest reading
+					reply := make(chan Reading, 1)
+					queries <- reply
+					cur := <-reply
+					if cur.Value > 0 {
+						lakeLevel = cur.Value
+						unit = cur.Unit
+					}
+				}
+			}
+
+			entry := BoatLog{
+				Action:    req.Action,
+				Rating:    req.Rating,
+				LakeLevel: lakeLevel,
+				Unit:      unit,
+				FullPool:  summerFullPool,
+				Delta:     lakeLevel - summerFullPool,
+				LoggedAt:  req.LoggedAt,
+				Notes:     req.Notes,
+			}
+
+			created := boatStore.Add(entry)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(created)
+
+		case http.MethodDelete:
+			id := r.URL.Query().Get("id")
+			if id == "" {
+				http.Error(w, "id parameter is required", http.StatusBadRequest)
+				return
+			}
+			if !boatStore.Delete(id) {
+				http.Error(w, "log not found", http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	mux.HandleFunc("/api/boat-logs/export", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		logs := boatStore.GetAll()
+		var buf bytes.Buffer
+		cw := csv.NewWriter(&buf)
+
+		// Header
+		_ = cw.Write([]string{"id", "action", "rating", "lake_level", "unit", "full_pool", "delta", "logged_at", "notes"})
+
+		for _, l := range logs {
+			_ = cw.Write([]string{
+				l.ID,
+				l.Action,
+				l.Rating,
+				fmt.Sprintf("%.2f", l.LakeLevel),
+				l.Unit,
+				fmt.Sprintf("%.2f", l.FullPool),
+				fmt.Sprintf("%.2f", l.Delta),
+				l.LoggedAt.Format(time.RFC3339),
+				l.Notes,
+			})
+		}
+		cw.Flush()
+
+		filename := fmt.Sprintf("boat-lift-logs-%s.csv", time.Now().Format("20060102-150405"))
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+		w.Write(buf.Bytes())
+	})
+
+	mux.HandleFunc("/api/boat-logs/import", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Support both multipart file upload and raw CSV body
+		var reader io.Reader = r.Body
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			if err := r.ParseMultipartForm(10 << 20); err == nil {
+				file, _, err := r.FormFile("file")
+				if err == nil {
+					defer file.Close()
+					reader = file
+				}
+			}
+		}
+
+		cr := csv.NewReader(reader)
+		cr.FieldsPerRecord = -1
+		records, err := cr.ReadAll()
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to parse CSV: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		if len(records) == 0 {
+			http.Error(w, "CSV file is empty", http.StatusBadRequest)
+			return
+		}
+
+		// Detect header indices for input fields: action, rating, logged_at, notes, id (optional)
+		colIdx := map[string]int{
+			"id":        -1,
+			"action":    -1,
+			"rating":    -1,
+			"logged_at": -1,
+			"date":      -1,
+			"time":      -1,
+			"datetime":  -1,
+			"notes":     -1,
+			"note":      -1,
+		}
+
+		hasHeader := false
+		headerRow := records[0]
+		for i, h := range headerRow {
+			hClean := strings.ToLower(strings.TrimSpace(h))
+			if _, exists := colIdx[hClean]; exists {
+				colIdx[hClean] = i
+				hasHeader = true
+			}
+		}
+
+		startRow := 0
+		if hasHeader {
+			startRow = 1
+		} else {
+			// default column positions if no named header:
+			// action, rating, logged_at, notes
+			colIdx["action"] = 0
+			colIdx["rating"] = 1
+			colIdx["logged_at"] = 2
+			colIdx["notes"] = 3
+		}
+
+		imported := 0
+		for rowIdx := startRow; rowIdx < len(records); rowIdx++ {
+			row := records[rowIdx]
+			if len(row) == 0 || (len(row) == 1 && strings.TrimSpace(row[0]) == "") {
+				continue
+			}
+
+			getVal := func(names ...string) string {
+				for _, name := range names {
+					idx := colIdx[name]
+					if idx >= 0 && idx < len(row) {
+						v := strings.TrimSpace(row[idx])
+						if v != "" {
+							return v
+						}
+					}
+				}
+				return ""
+			}
+
+			action := strings.ToLower(getVal("action"))
+			if action != "in" && action != "out" {
+				continue // skip invalid records
+			}
+
+			rating := strings.ToLower(getVal("rating"))
+			if rating != "green" && rating != "yellow" && rating != "red" {
+				rating = "green"
+			}
+
+			loggedAtStr := getVal("logged_at", "datetime", "date", "time")
+			loggedAt := time.Now()
+			if loggedAtStr != "" {
+				// Try RFC3339, standard date formats
+				for _, layout := range []string{
+					time.RFC3339,
+					"2006-01-02T15:04",
+					"2006-01-02 15:04:05",
+					"2006-01-02 15:04",
+					"2006-01-02",
+					"01/02/2006 15:04",
+					"01/02/2006",
+				} {
+					if t, err := time.Parse(layout, loggedAtStr); err == nil {
+						loggedAt = t
+						break
+					}
+				}
+			}
+
+			// Pool level always retrieved from the USGS API for this point in time
+			lakeLevel := 0.0
+			unit := "ft"
+			fc, err := client.GetPointContinuous(r.Context(), defaultStationID, defaultParameter, loggedAt)
+			if err == nil && len(fc.Features) > 0 {
+				p := fc.Features[0].Properties
+				lakeLevel = float64(p.Value)
+				if p.UnitOfMeasure != "" {
+					unit = p.UnitOfMeasure
+				}
+			} else {
+				// Fallback to latest reading if point not available
+				reply := make(chan Reading, 1)
+				queries <- reply
+				cur := <-reply
+				if cur.Value > 0 {
+					lakeLevel = cur.Value
+					unit = cur.Unit
+				}
+			}
+
+			fullPool := summerFullPool
+			delta := lakeLevel - fullPool
+
+			notes := getVal("notes", "note")
+			id := getVal("id")
+
+			boatStore.Add(BoatLog{
+				ID:        id,
+				Action:    action,
+				Rating:    rating,
+				LakeLevel: lakeLevel,
+				Unit:      unit,
+				FullPool:  fullPool,
+				Delta:     delta,
+				LoggedAt:  loggedAt,
+				Notes:     notes,
+			})
+			imported++
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"imported": imported,
+			"total":    len(boatStore.GetAll()),
+		})
+	})
+
 	return mux
 }
 
@@ -366,9 +793,12 @@ func main() {
 	go fetchLoop(client, updates, done)
 
 	// HTTP server.
+	boatStore := NewMemoryBoatStore()
+
+	// HTTP server.
 	srv := &http.Server{
 		Addr:    ":8080",
-		Handler: newMux(client, queries),
+		Handler: newMux(client, queries, boatStore),
 	}
 	go func() {
 		log.Printf("[http] listening on http://localhost:8080")

@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flathead Lake - Boat Lift Tracker</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Georgia, "Times New Roman", serif;
+      min-height: 100vh;
+      background: #0a1f2e;
+      color: #e8f4f8;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---------- Top navigation bar & Hamburger menu ---------- */
+    .top-nav {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 60px;
+      padding: 0 1.25rem;
+      display: flex;
+      align-items: center;
+      z-index: 100;
+    }
+    .hamburger-btn {
+      background: rgba(10, 31, 46, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
+      width: 40px;
+      height: 40px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      backdrop-filter: blur(4px);
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .hamburger-btn:hover {
+      background: rgba(10, 31, 46, 0.85);
+      border-color: rgba(125, 212, 248, 0.5);
+    }
+    .hamburger-btn span {
+      display: block;
+      width: 20px;
+      height: 2px;
+      background: #e8f4f8;
+      border-radius: 2px;
+    }
+    .drawer-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.3s, visibility 0.3s;
+      z-index: 200;
+    }
+    .drawer-overlay.open {
+      opacity: 1;
+      visibility: visible;
+    }
+    .nav-drawer {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 280px;
+      background: #081722;
+      border-right: 1px solid rgba(255, 255, 255, 0.12);
+      transform: translateX(-100%);
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 201;
+      display: flex;
+      flex-direction: column;
+      padding: 1.5rem 1.25rem;
+      box-shadow: 4px 0 24px rgba(0,0,0,0.5);
+    }
+    .nav-drawer.open {
+      transform: translateX(0);
+    }
+    .drawer-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .drawer-title {
+      font-size: 1.15rem;
+      color: #c8e8f5;
+      font-weight: normal;
+      letter-spacing: 0.05em;
+    }
+    .drawer-close-btn {
+      background: none;
+      border: none;
+      color: #7aaccc;
+      font-size: 1.5rem;
+      cursor: pointer;
+      line-height: 1;
+      padding: 0.2rem 0.5rem;
+    }
+    .drawer-close-btn:hover {
+      color: #fff;
+    }
+    .nav-links {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    .nav-link {
+      display: block;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.95rem;
+      color: #7aaccc;
+      text-decoration: none;
+      padding: 0.65rem 0.9rem;
+      border-radius: 6px;
+      transition: background 0.15s, color 0.15s;
+    }
+    .nav-link:hover {
+      background: rgba(255, 255, 255, 0.06);
+      color: #7dd4f8;
+    }
+    .nav-link.active {
+      background: rgba(125, 212, 248, 0.15);
+      color: #7dd4f8;
+      font-weight: 600;
+    }
+
+    /* ---------- sky + mountains scene ---------- */
+    .scene {
+      position: relative;
+      width: 100%;
+      height: 180px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .sky {
+      position: absolute; inset: 0;
+      background: linear-gradient(to bottom,
+        #0d2a4a 0%,
+        #1a4a7a 40%,
+        #2e6da4 70%,
+        #5fa8c8 100%);
+    }
+    .sun-glow {
+      position: absolute;
+      bottom: 50px; left: 50%;
+      transform: translateX(-50%);
+      width: 300px; height: 80px;
+      background: radial-gradient(ellipse at center,
+        rgba(255,210,120,0.35) 0%,
+        rgba(255,160,60,0.12) 55%,
+        transparent 80%);
+    }
+    .mountains {
+      position: absolute;
+      bottom: 40px; left: 0; right: 0;
+    }
+    .water {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 45px;
+      background: linear-gradient(to bottom,
+        #1e6fa8 0%,
+        #155a8a 50%,
+        #0e3d5e 100%);
+    }
+    .water::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        to bottom,
+        transparent 0px,
+        transparent 10px,
+        rgba(255,255,255,0.04) 10px,
+        rgba(255,255,255,0.04) 11px
+      );
+    }
+
+    /* ---------- page layout ---------- */
+    .page {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 1.5rem 1rem 3rem;
+      background: linear-gradient(to bottom, #0e3d5e, #0a2233);
+    }
+    .headline {
+      text-align: center;
+      margin-bottom: 1.5rem;
+    }
+    .headline h1 {
+      font-size: 1.85rem;
+      font-weight: normal;
+      letter-spacing: 0.04em;
+      color: #c8e8f5;
+      text-shadow: 0 1px 8px rgba(0,0,0,0.6);
+    }
+    .headline .tagline {
+      margin-top: 0.35rem;
+      font-size: 0.82rem;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      color: #7aaccc;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .container {
+      max-width: 900px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    /* ---------- Card styles ---------- */
+    .card {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px;
+      padding: 1.5rem 1.75rem;
+      backdrop-filter: blur(4px);
+    }
+    .card-title {
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.85rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #7aaccc;
+      margin-bottom: 1.25rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* ---------- Form elements ---------- */
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1.25rem;
+      margin-bottom: 1.25rem;
+    }
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .input-group label {
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.75rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #7aaccc;
+      font-weight: 600;
+    }
+    .input-group input, .input-group select, .input-group textarea {
+      background: rgba(10, 31, 46, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 6px;
+      color: #e8f4f8;
+      padding: 0.65rem 0.85rem;
+      font-size: 0.9rem;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .input-group input:focus, .input-group select:focus, .input-group textarea:focus {
+      border-color: #7dd4f8;
+    }
+
+    /* Radio buttons for rating */
+    .rating-group {
+      display: flex;
+      gap: 0.75rem;
+      margin-top: 0.25rem;
+    }
+    .rating-label {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.6rem 0.5rem;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      background: rgba(10, 31, 46, 0.6);
+      cursor: pointer;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.85rem;
+      transition: all 0.2s;
+    }
+    .rating-label input[type="radio"] {
+      display: none;
+    }
+    .rating-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .dot-green { background: #4ecb8d; box-shadow: 0 0 6px rgba(78, 203, 141, 0.5); }
+    .dot-yellow { background: #f4a44a; box-shadow: 0 0 6px rgba(244, 164, 74, 0.5); }
+    .dot-red { background: #f25f5c; box-shadow: 0 0 6px rgba(242, 95, 92, 0.5); }
+
+    .rating-label.green-selected {
+      background: rgba(78, 203, 141, 0.15);
+      border-color: #4ecb8d;
+      color: #a8f0cc;
+    }
+    .rating-label.yellow-selected {
+      background: rgba(244, 164, 74, 0.15);
+      border-color: #f4a44a;
+      color: #ffd8a8;
+    }
+    .rating-label.red-selected {
+      background: rgba(242, 95, 92, 0.15);
+      border-color: #f25f5c;
+      color: #ffb8b6;
+    }
+
+    /* Action radio button style */
+    .action-group {
+      display: flex;
+      gap: 0.75rem;
+      margin-top: 0.25rem;
+    }
+    .action-label {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.6rem 0.5rem;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      background: rgba(10, 31, 46, 0.6);
+      cursor: pointer;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.85rem;
+      transition: all 0.2s;
+    }
+    .action-label input[type="radio"] {
+      display: none;
+    }
+    .action-label.selected {
+      background: rgba(125, 212, 248, 0.2);
+      border-color: #7dd4f8;
+      color: #7dd4f8;
+      font-weight: 600;
+    }
+
+    .level-preview {
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.8rem;
+      color: #7aaccc;
+      margin-top: 0.35rem;
+    }
+
+    .btn-submit {
+      background: #1a6ea8;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 6px;
+      color: #ffffff;
+      padding: 0.75rem 1.75rem;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .btn-submit:hover { background: #2385c7; }
+    .btn-submit:active { transform: scale(0.98); }
+
+    .header-actions {
+      display: flex;
+      gap: 0.6rem;
+      align-items: center;
+    }
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 6px;
+      color: #7dd4f8;
+      padding: 0.35rem 0.75rem;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.8rem;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      text-decoration: none;
+      transition: all 0.15s;
+    }
+    .btn-secondary:hover {
+      background: rgba(125, 212, 248, 0.2);
+      border-color: #7dd4f8;
+      color: #ffffff;
+    }
+
+    /* ---------- Help icon & Flyover Tooltip ---------- */
+    .help-tooltip-wrapper {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
+    .help-icon {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: rgba(125, 212, 248, 0.15);
+      border: 1px solid rgba(125, 212, 248, 0.4);
+      color: #7dd4f8;
+      font-size: 0.75rem;
+      font-weight: 700;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: help;
+      transition: all 0.2s;
+    }
+    .help-icon:hover {
+      background: rgba(125, 212, 248, 0.3);
+      border-color: #7dd4f8;
+      color: #ffffff;
+      box-shadow: 0 0 8px rgba(125, 212, 248, 0.4);
+    }
+    .help-flyover {
+      visibility: hidden;
+      opacity: 0;
+      width: 320px;
+      background: #081722;
+      color: #e8f4f8;
+      text-align: left;
+      border-radius: 8px;
+      padding: 0.9rem 1rem;
+      position: absolute;
+      z-index: 50;
+      bottom: 130%;
+      right: 0;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7);
+      border: 1px solid rgba(125, 212, 248, 0.3);
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.78rem;
+      line-height: 1.45;
+      pointer-events: none;
+      transition: opacity 0.25s ease, visibility 0.25s ease, transform 0.25s ease;
+      transform: translateY(6px);
+    }
+    .help-flyover::after {
+      content: "";
+      position: absolute;
+      top: 100%;
+      right: 8px;
+      border-width: 6px;
+      border-style: solid;
+      border-color: #081722 transparent transparent transparent;
+    }
+    .help-tooltip-wrapper:hover .help-flyover,
+    .help-tooltip-wrapper:focus-within .help-flyover {
+      visibility: visible;
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .help-flyover-title {
+      font-weight: 700;
+      color: #7dd4f8;
+      margin-bottom: 0.4rem;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .help-flyover code {
+      background: rgba(255, 255, 255, 0.1);
+      padding: 0.15rem 0.35rem;
+      border-radius: 4px;
+      color: #a8f0cc;
+      font-size: 0.75rem;
+      display: block;
+      margin: 0.4rem 0;
+      word-break: break-all;
+    }
+    .help-flyover-list {
+      margin: 0.3rem 0 0 1.1rem;
+      padding: 0;
+      color: #c8e8f5;
+    }
+    .help-flyover-list li {
+      margin-bottom: 0.25rem;
+    }
+
+    /* ---------- Logs list / table ---------- */
+    .logs-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+    .log-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(10, 31, 46, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .log-left {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.35rem 0.75rem;
+      border-radius: 20px;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .badge-in { background: rgba(125, 212, 248, 0.2); color: #7dd4f8; border: 1px solid rgba(125, 212, 248, 0.4); }
+    .badge-out { background: rgba(244, 164, 74, 0.2); color: #f4a44a; border: 1px solid rgba(244, 164, 74, 0.4); }
+
+    .rating-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.25rem 0.65rem;
+      border-radius: 12px;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .rating-pill.green { background: rgba(78, 203, 141, 0.2); color: #4ecb8d; }
+    .rating-pill.yellow { background: rgba(244, 164, 74, 0.2); color: #f4a44a; }
+    .rating-pill.red { background: rgba(242, 95, 92, 0.2); color: #f25f5c; }
+
+    .log-details {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .log-date {
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.95rem;
+      color: #e8f4f8;
+      font-weight: 600;
+    }
+    .log-notes {
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.8rem;
+      color: #7aaccc;
+    }
+    .log-right {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+    }
+    .log-level {
+      text-align: right;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    }
+    .log-level-val {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #7dd4f8;
+    }
+    .log-level-delta {
+      font-size: 0.75rem;
+      color: #7aaccc;
+    }
+
+    .btn-delete {
+      background: none;
+      border: none;
+      color: #7aaccc;
+      cursor: pointer;
+      font-size: 1.1rem;
+      padding: 0.3rem 0.5rem;
+      border-radius: 4px;
+      transition: color 0.15s, background 0.15s;
+    }
+    .btn-delete:hover {
+      color: #f25f5c;
+      background: rgba(242, 95, 92, 0.1);
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 2.5rem 1rem;
+      color: #7aaccc;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-style: italic;
+      font-size: 0.95rem;
+    }
+
+    /* ---------- footer ---------- */
+    footer {
+      text-align: center;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 0.72rem;
+      color: #3a6a88;
+      padding: 1.5rem 1rem;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      letter-spacing: 0.04em;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Drawer overlay & navigation -->
+  <div class="drawer-overlay" id="drawerOverlay" onclick="toggleMenu(false)"></div>
+  <aside class="nav-drawer" id="navDrawer" aria-label="Main Navigation">
+    <div class="drawer-header">
+      <div class="drawer-title">Flathead Lake</div>
+      <button class="drawer-close-btn" onclick="toggleMenu(false)" aria-label="Close menu">&times;</button>
+    </div>
+    <ul class="nav-links">
+      <li><a href="/" class="nav-link">Current Level</a></li>
+      <li><a href="/history" class="nav-link">Historical Query & Chart</a></li>
+      <li><a href="/boat" class="nav-link active">Boat Lift Tracker</a></li>
+    </ul>
+  </aside>
+
+  <!-- Scenic header -->
+  <div class="scene">
+    <div class="top-nav">
+      <button class="hamburger-btn" onclick="toggleMenu(true)" aria-label="Open navigation menu">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+    </div>
+    <div class="sky"></div>
+    <div class="sun-glow"></div>
+    <svg class="mountains" viewBox="0 0 1200 120" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,120 0,80 60,50 120,70 200,20 280,65 340,30 400,60 460,10 520,55 580,25 640,60 700,15 760,50 820,30 880,55 940,20 1000,60 1060,35 1120,55 1200,40 1200,120" fill="#0d1e2e"/>
+      <polygon points="200,20 220,35 180,38" fill="rgba(230,240,250,0.7)"/>
+      <polygon points="460,10 480,28 440,30" fill="rgba(230,240,250,0.7)"/>
+      <polygon points="580,25 598,42 562,43" fill="rgba(230,240,250,0.7)"/>
+      <polygon points="700,15 720,33 680,35" fill="rgba(230,240,250,0.7)"/>
+      <polygon points="940,20 958,37 922,39" fill="rgba(230,240,250,0.7)"/>
+    </svg>
+    <div class="water"></div>
+  </div>
+
+  <!-- Main content -->
+  <div class="page">
+    <div class="headline">
+      <h1>Boat Lift Season Tracker</h1>
+      <div class="tagline">Log Launch & Haul-Out Water Levels · Rate Lift Clearance</div>
+    </div>
+
+    <div class="container">
+      <!-- Entry Form -->
+      <div class="card">
+        <div class="card-title">Record New Boat Action</div>
+        <form id="boatForm" onsubmit="handleSubmit(event)">
+          <div class="form-grid">
+            <!-- Action selection -->
+            <div class="input-group">
+              <label>Boat Action</label>
+              <div class="action-group">
+                <label class="action-label selected" id="actionInLabel">
+                  <input type="radio" name="action" value="in" checked onchange="updateActionSelection()">
+                  🚤 Boat In (Launch)
+                </label>
+                <label class="action-label" id="actionOutLabel">
+                  <input type="radio" name="action" value="out" onchange="updateActionSelection()">
+                  🏗️ Boat Out (Haul)
+                </label>
+              </div>
+            </div>
+
+            <!-- Date / Time -->
+            <div class="input-group">
+              <label for="loggedAt">Date & Time</label>
+              <input type="datetime-local" id="loggedAt" required onchange="checkLakeLevelForDate()">
+              <div class="level-preview" id="levelPreview">Fetching lake level for time...</div>
+            </div>
+          </div>
+
+          <div class="form-grid">
+            <!-- Lift Ease Rating -->
+            <div class="input-group">
+              <label>Lift Rating (Difficulty / Clearance)</label>
+              <div class="rating-group">
+                <label class="rating-label green-selected" id="ratingGreenLabel">
+                  <input type="radio" name="rating" value="green" checked onchange="updateRatingSelection()">
+                  <span class="rating-dot dot-green"></span>
+                  <span>Green</span>
+                </label>
+                <label class="rating-label" id="ratingYellowLabel">
+                  <input type="radio" name="rating" value="yellow" onchange="updateRatingSelection()">
+                  <span class="rating-dot dot-yellow"></span>
+                  <span>Yellow</span>
+                </label>
+                <label class="rating-label" id="ratingRedLabel">
+                  <input type="radio" name="rating" value="red" onchange="updateRatingSelection()">
+                  <span class="rating-dot dot-red"></span>
+                  <span>Red</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Notes -->
+            <div class="input-group">
+              <label for="notes">Notes (Optional)</label>
+              <input type="text" id="notes" placeholder="e.g. Cleared bunks by 3 inches, wind from south">
+            </div>
+          </div>
+
+          <button type="submit" class="btn-submit" id="btnSubmit">Save Entry</button>
+        </form>
+      </div>
+
+      <!-- Log History Card -->
+      <div class="card">
+        <div class="card-title">
+          <div style="display:flex; align-items:baseline; gap:0.75rem;">
+            <span>Logged Records</span>
+            <span id="logCount" style="font-size:0.75rem; color:#4a8aaa;">0 entries</span>
+          </div>
+          <div class="header-actions">
+            <input type="file" id="csvFileInput" accept=".csv,text/csv" style="display:none;" onchange="handleFileImport(event)">
+            <button type="button" class="btn-secondary" onclick="document.getElementById('csvFileInput').click()" title="Import records from CSV file">
+              📥 Import CSV
+            </button>
+            <div class="help-tooltip-wrapper" tabindex="0" aria-label="CSV format help">
+              <span class="help-icon">?</span>
+              <div class="help-flyover" role="tooltip">
+                <div class="help-flyover-title">CSV Import Format</div>
+                <div>Accepts standard CSV with or without a header row. Pool elevation, full pool, and delta are fetched automatically from the USGS API. Supported column names:</div>
+                <code>action, rating, logged_at, notes</code>
+                <ul class="help-flyover-list">
+                  <li><strong>action:</strong> <code>in</code> (launch) or <code>out</code> (haul)</li>
+                  <li><strong>rating:</strong> <code>green</code>, <code>yellow</code>, or <code>red</code></li>
+                  <li><strong>logged_at:</strong> ISO/RFC3339 (e.g. <code>2024-06-01T14:00:00Z</code>) or <code>YYYY-MM-DD</code></li>
+                  <li><strong>notes:</strong> optional comments / observations</li>
+                </ul>
+              </div>
+            </div>
+            <a href="/api/boat-logs/export" class="btn-secondary" download title="Export records to CSV file">
+              📤 Export CSV
+            </a>
+          </div>
+        </div>
+        <div class="logs-list" id="logsContainer">
+          <div class="empty-state">Loading records...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>Data sourced from USGS Water Resources · Polson, Montana</footer>
+
+  <script>
+    function toggleMenu(open) {
+      document.getElementById('navDrawer').classList.toggle('open', open);
+      document.getElementById('drawerOverlay').classList.toggle('open', open);
+    }
+
+    function formatLocalDatetime(d) {
+      const pad = n => String(n).padStart(2, '0');
+      return d.getFullYear() + '-' +
+        pad(d.getMonth() + 1) + '-' +
+        pad(d.getDate()) + 'T' +
+        pad(d.getHours()) + ':' +
+        pad(d.getMinutes());
+    }
+
+    let fetchedElevation = null;
+
+    function initForm() {
+      const now = new Date();
+      document.getElementById('loggedAt').value = formatLocalDatetime(now);
+      checkLakeLevelForDate();
+      loadLogs();
+    }
+
+    function updateActionSelection() {
+      const isOut = document.querySelector('input[name="action"]:checked').value === 'out';
+      document.getElementById('actionInLabel').classList.toggle('selected', !isOut);
+      document.getElementById('actionOutLabel').classList.toggle('selected', isOut);
+    }
+
+    function updateRatingSelection() {
+      const val = document.querySelector('input[name="rating"]:checked').value;
+      document.getElementById('ratingGreenLabel').classList.toggle('green-selected', val === 'green');
+      document.getElementById('ratingYellowLabel').classList.toggle('yellow-selected', val === 'yellow');
+      document.getElementById('ratingRedLabel').classList.toggle('red-selected', val === 'red');
+    }
+
+    function checkLakeLevelForDate() {
+      const dtVal = document.getElementById('loggedAt').value;
+      const preview = document.getElementById('levelPreview');
+      if (!dtVal) return;
+
+      const date = new Date(dtVal);
+      preview.textContent = "Looking up USGS lake level at this time...";
+
+      fetch('/data/point?time=' + encodeURIComponent(date.toISOString()))
+        .then(r => {
+          if (!r.ok) throw new Error("Could not find USGS reading for exact time");
+          return r.json();
+        })
+        .then(d => {
+          fetchedElevation = d.value;
+          const deltaText = d.delta >= 0
+            ? '+' + d.delta.toFixed(2) + ' ft from full pool'
+            : d.delta.toFixed(2) + ' ft from full pool';
+          preview.textContent = 'Lake level at this time: ' + d.value.toFixed(2) + ' ' + d.unit + ' (' + deltaText + ')';
+          preview.style.color = '#7dd4f8';
+        })
+        .catch(() => {
+          fetchedElevation = null;
+          preview.textContent = "Note: USGS elevation reading will be approximated from available continuous data.";
+          preview.style.color = '#f4a44a';
+        });
+    }
+
+    function handleSubmit(e) {
+      e.preventDefault();
+      const action = document.querySelector('input[name="action"]:checked').value;
+      const rating = document.querySelector('input[name="rating"]:checked').value;
+      const loggedAtVal = document.getElementById('loggedAt').value;
+      const notes = document.getElementById('notes').value;
+
+      if (!loggedAtVal) return;
+
+      const payload = {
+        action: action,
+        rating: rating,
+        logged_at: new Date(loggedAtVal).toISOString(),
+        notes: notes
+      };
+      if (fetchedElevation !== null) {
+        payload.lake_level = fetchedElevation;
+      }
+
+      const btn = document.getElementById('btnSubmit');
+      btn.disabled = true;
+      btn.textContent = "Saving...";
+
+      fetch('/api/boat-logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      .then(r => {
+        if (!r.ok) throw new Error("Failed to save entry");
+        return r.json();
+      })
+      .then(() => {
+        btn.disabled = false;
+        btn.textContent = "Save Entry";
+        document.getElementById('notes').value = '';
+        loadLogs();
+      })
+      .catch(err => {
+        btn.disabled = false;
+        btn.textContent = "Save Entry";
+        alert("Error: " + err.message);
+      });
+    }
+
+    function handleFileImport(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      fetch('/api/boat-logs/import', {
+        method: 'POST',
+        body: formData
+      })
+      .then(r => {
+        if (!r.ok) return r.text().then(t => { throw new Error(t); });
+        return r.json();
+      })
+      .then(res => {
+        alert("Successfully imported " + res.imported + " record(s)!");
+        e.target.value = ''; // reset file input
+        loadLogs();
+      })
+      .catch(err => {
+        alert("Import failed: " + err.message);
+        e.target.value = '';
+      });
+    }
+
+    function deleteLog(id) {
+      if (!confirm("Are you sure you want to delete this log entry?")) return;
+      fetch('/api/boat-logs?id=' + encodeURIComponent(id), { method: 'DELETE' })
+        .then(r => {
+          if (!r.ok) throw new Error("Failed to delete log");
+          loadLogs();
+        })
+        .catch(err => alert("Error: " + err.message));
+    }
+
+    function loadLogs() {
+      fetch('/api/boat-logs')
+        .then(r => r.json())
+        .then(logs => {
+          const container = document.getElementById('logsContainer');
+          document.getElementById('logCount').textContent = logs.length + (logs.length === 1 ? ' entry' : ' entries');
+
+          if (!logs || logs.length === 0) {
+            container.innerHTML = '<div class="empty-state">No boat logs recorded yet. Use the form above to add your first launch or haul-out.</div>';
+            return;
+          }
+
+          container.innerHTML = logs.map(l => {
+            const isOut = l.action === 'out';
+            const actionBadge = isOut
+              ? '<span class="badge badge-out">🏗️ Boat Out</span>'
+              : '<span class="badge badge-in">🚤 Boat In</span>';
+
+            let ratingPill = '';
+            if (l.rating === 'green') {
+              ratingPill = '<span class="rating-pill green"><span class="rating-dot dot-green"></span> Green</span>';
+            } else if (l.rating === 'yellow') {
+              ratingPill = '<span class="rating-pill yellow"><span class="rating-dot dot-yellow"></span> Yellow</span>';
+            } else {
+              ratingPill = '<span class="rating-pill red"><span class="rating-dot dot-red"></span> Red</span>';
+            }
+
+            const dt = new Date(l.logged_at).toLocaleString('en-US', {
+              month: 'short', day: 'numeric', year: 'numeric',
+              hour: 'numeric', minute: '2-digit'
+            });
+
+            const deltaText = l.delta >= 0
+              ? '▲ +' + l.delta.toFixed(2) + ' ft full pool'
+              : '▼ ' + l.delta.toFixed(2) + ' ft full pool';
+
+            const notesHtml = l.notes
+              ? '<div class="log-notes">“' + escapeHtml(l.notes) + '”</div>'
+              : '';
+
+            return `
+              <div class="log-item">
+                <div class="log-left">
+                  ${actionBadge}
+                  <div class="log-details">
+                    <div class="log-date">${dt} &nbsp;·&nbsp; ${ratingPill}</div>
+                    ${notesHtml}
+                  </div>
+                </div>
+                <div class="log-right">
+                  <div class="log-level">
+                    <div class="log-level-val">${l.lake_level.toFixed(2)} <span style="font-size:0.8rem; font-weight:normal; color:#7aaccc;">${l.unit || 'ft'}</span></div>
+                    <div class="log-level-delta">${deltaText}</div>
+                  </div>
+                  <button class="btn-delete" onclick="deleteLog('${l.id}')" title="Delete log entry" aria-label="Delete entry">&times;</button>
+                </div>
+              </div>
+            `;
+          }).join('');
+        })
+        .catch(err => {
+          document.getElementById('logsContainer').innerHTML = '<div class="empty-state">Failed to load boat logs.</div>';
+        });
+    }
+
+    function escapeHtml(text) {
+      const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+      return text.replace(/[&<>"']/g, m => map[m]);
+    }
+
+    initForm();
+  </script>
+</body>
+</html>
