@@ -9,12 +9,13 @@ RUN go mod download
 COPY . .
 RUN rm -f boat_tracker.db boat_tracker.db*
 RUN mkdir /data && chmod 777 /data
+RUN chown -R 1000:1000 /data
 
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o pool .
 
 # ---- App stage -------------------------------------------------------------
 FROM registry.access.redhat.com/hi/static:latest
-
+USER 1000
 WORKDIR /app
 
 COPY --from=builder /build/pool /app/pool
